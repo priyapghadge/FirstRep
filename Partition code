@@ -1,0 +1,39 @@
+import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.functions._
+class processing(spark:SparkSession){
+
+def runProcessing(): Unit ={
+  import spark.implicits._
+  val mainFilePath = "file:///home/dbuser11/mainfile.csv"
+  val deltaFilePath = "file:///home/dbuser11/deltafile.csv"
+
+  val mainTableDF: DataFrame = spark.read.option("header","true").option("inferSchema","true").csv(mainFilePath)
+  mainTableDF.write.mode("overwrite").partitionBy("year").saveAsTable("santlalpoc.mainTable")
+
+  val deltaTableDF: DataFrame = spark.read.option("header","true").option("inferSchema","true").csv(deltaFilePath)
+  val distinctYear: Dataset[Row] = deltaTableDF.select("year").distinct()
+
+  val ListVal2: Array[Any] = distinctYear.rdd.map(r => r(0)).cache().collect()
+  val PartitionYear: String = "(\"" + ListVal2.mkString("\",\"") + "\")"
+
+  val mainDataDF: DataFrame = spark.sql(s"select * from santlalpoc.mainTable where year in $PartitionYear")
+
+  val schema = mainDataDF.columns.toList
+
+  val insertRec = deltaTableDF.as("df1").join(mainDataDF.as("df2"),$"df1.name" === $"df2.name","left")
+    .filter($"df2.name".isNull)
+      .select($"df1.*")
+      .select(schema.head , schema.tail: _*)
+
+  mainDataDF.union(insertRec)
+    .withColumn("eff_date" , current_timestamp())
+    .write
+    .mode("overwrite")
+    .partitionBy("year")
+    .saveAsTable("santlalpoc.stagetable")
+
+  spark.sql(s"insert overwrite table santlalpoc.maintable partition(year) select * from santlalpoc.stagetable")
+}
+
+
+}
